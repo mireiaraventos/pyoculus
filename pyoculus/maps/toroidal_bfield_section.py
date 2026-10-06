@@ -8,14 +8,15 @@ class ToroidalBfieldSection(IntegratedMap):
     Class that sets up a Map given by following the a magnetic field in toroidal system :math:`(s, \\theta, \\zeta)`.
     """
 
-    def __init__(self, toroidalbfield : ToroidalBfield, phi0=0., **kwargs):
+    def __init__(self, toroidalbfield : ToroidalBfield, phi0=0., domain=None, **kwargs):
 
         if not isinstance(toroidalbfield, ToroidalBfield):
             raise ValueError("The input should be a ToroidalBfield object.")
         else:
             self._mf = toroidalbfield
-
-        domain = [(-1, 1), (0, 2*np.pi)]
+    
+        if domain is None:
+            domain = [(-1, 1), (0, 2*np.pi)]
 
         periodicity = [0, 1]
 
