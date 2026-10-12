@@ -42,7 +42,7 @@ class ToroidalBfieldSection(IntegratedMap):
     def df(self, t, y0):
         ic = np.array([*y0, 1.0, 0.0, 0.0, 1.0])
         self._integrator.set_rhs(self._ode_rhs_tangent)
-        return self._integrate(t, ic)[2:6].reshape([2, 2]).T
+        return self._integrate(t, ic)[2:6].reshape([2, 2])
 
     def lagrangian(self, y0, t):
         self._integrator.set_rhs(self._ode_rhs_A)
