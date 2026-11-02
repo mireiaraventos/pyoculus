@@ -1524,7 +1524,7 @@ class Manifold(BaseSolver):
         # refining based on curvature and distance between points. 
         # The adaptive algorithm is implemented in the function below.
 
-        def adaptive_algorithm(points, eps, max_iter=50, max_points=2000):
+        def adaptive_algorithm(points, eps, max_iter=50, max_points=10000):
             # point should be all points on the fundamental
             # domain: [eps, eps*lambda] (including endpoint).
             # Curvature and sampling new points is done
