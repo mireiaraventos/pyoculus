@@ -1566,8 +1566,8 @@ class Manifold(BaseSolver):
                 eps_refined = sorted(set(eps_refined))
                 if hit_cap:
                     break
-            # else:
-            #     hit_cap = True
+            else:
+                hit_cap = True
 
             if hit_cap:
                 logger.warning(
@@ -1669,10 +1669,13 @@ class Manifold(BaseSolver):
                 # count too, since a genuine curvature singularity (or just a very tight tol) can
                 # otherwise blow this up long before max_iter is reached.
                 eps_refined = list(eps)
-                hit_cap = False
+                # 3 possible status: "refined", "converged", "max_points"
+                status = "refined"  # "refined" = new points were successfully added
+
+
                 for _ in range(max_iter):
                     if len(eps_refined) >= max_points:
-                        hit_cap = True
+                        status = "max_points" # "max_points" = the point limit was reached before convergence
                         break
                     new_points = []
                     for i in range(len(eps_refined)-1):
@@ -1683,27 +1686,22 @@ class Manifold(BaseSolver):
                         if D/R_cur > tol:
                             new_points.append(e_mid)
                     if not new_points:
+                        status = "converged" # "converged" = no additional points are needed
                         break
                     if len(eps_refined) + len(new_points) > max_points:
                         new_points = new_points[:max(0, max_points - len(eps_refined))]
-                        hit_cap = True
+                        status = "max_points" # "max_points" = the point limit was reached before convergence
+
                     eps_refined.extend(new_points)
                     eps_refined = sorted(set(eps_refined))
-                    if hit_cap:
+                    
+                    if status == "max_points":
                         break
-                else:
-                    hit_cap = True
-    
-                if hit_cap:
-                    logger.warning(
-                        f"Adaptive manifold refinement hit max_iter={max_iter}/max_points={max_points} "
-                        f"without converging to tol={tol}; using the {len(eps_refined)} points found so far."
-                    )
     
                 # make into np array
                 eps_refined = np.array(eps_refined)
     
-                return eps_refined
+                return eps_refined, status
             
     
             # Now evolve the stable and unstable manifolds using the adaptive algorithm
@@ -1720,13 +1718,8 @@ class Manifold(BaseSolver):
 
                     # Integrate the initial points for k map iterations
                     return self.integrate(points, nintersect=k, direction=direction)[-1]
-                
-                # Start with three points spanning the fundamental domain
-                # [eps0, eps1] (geometrically spaced, matching the
-                # eigenvalue-driven spacing convention used elsewhere).
-                eps_seed = np.geomspace(eps0, eps1, 8)
-                points_seed = evaluate_points(eps_seed, k=0)
-    
+
+                # Initial epsilon values spanning the fundamental domain
                 eps_k = np.geomspace(eps0, eps1, 8)
                 periods = []
 
@@ -1736,23 +1729,35 @@ class Manifold(BaseSolver):
                     points_k = evaluate_points(eps_k, k)
 
                     # Refine the current segment
-                    for _ in range(50):
+                    max_iter = 50
 
-                        # Find epsilon values where refinement is needed
-                        eps_new = adaptive_algorithm(
-                            points_k, eps_k,
-                            max_iter=1
-                        )
+                    for iteration in range(max_iter):
 
-                        # Stop if no new points are needed
-                        if len(eps_new) == len(eps_k):
+                        eps_new, status = adaptive_algorithm(points_k, eps_k, max_iter=1)
+
+                        # Stop if the curvature criterion is satisfied
+                        if status == "converged":
                             break
 
-                        # Update epsilon values
-                        eps_k = eps_new
+                        # Update the points if refinement added new epsilons
+                        if len(eps_new) > len(eps_k):
+                            eps_k = eps_new
+                            points_k = evaluate_points(eps_k, k)
 
-                        # Recompute the manifold through direct integration
-                        points_k = evaluate_points(eps_k, k)
+                        # Stop if the point limit was reached
+                        if status == "max_points":
+                            logger.warning(f"Adaptive refinement reached max_points "
+                                f"at period k={k}, with {len(eps_k)} points "
+                                f"(tol={tol})."
+                            )
+                            break
+
+                    else:
+                        logger.warning(
+                            f"Adaptive refinement reached max_iter={max_iter} "
+                            f"at period k={k}, with {len(eps_k)} points "
+                            f"(tol={tol})."
+                        )
 
                     periods.append(points_k.copy())
     
