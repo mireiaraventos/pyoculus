@@ -1566,8 +1566,8 @@ class Manifold(BaseSolver):
                 eps_refined = sorted(set(eps_refined))
                 if hit_cap:
                     break
-            else:
-                hit_cap = True
+            # else:
+            #     hit_cap = True
 
             if hit_cap:
                 logger.warning(
@@ -1630,6 +1630,156 @@ class Manifold(BaseSolver):
             logger.warning(f"Unused keyword arguments: {kwargs}")
 
         return self._stable_trajectory, self._unstable_trajectory
+
+    def compute_adaptive2(self, n_s_extra=2, n_u_extra=2, tol=1e-3, **kwargs):
+            # compute the stable and unstable manifolds with adaptive algorithms
+            # where refinement is done based on the distance between points and 
+            # the curvature of the manifold. Assumes find_clinics(_exhaustive) 
+            # has been run to find the clinics.
+            if self.clinics.is_empty:
+                raise ValueError("Clinics must be computed before running adaptive manifold computation.")
+            
+            # get n_s and n_u from the clinics
+            nint_pair = self.clinics.nint_pair
+            nint_s, nint_u = nint_pair
+            n_s = nint_s + n_s_extra
+            n_u = nint_u + n_u_extra
+    
+            # compute the manifold adaptively
+            # refining based on curvature and distance between points. 
+            # The adaptive algorithm is implemented in the function below.
+    
+            def adaptive_algorithm(points, eps, max_iter=50, max_points=2000):
+                # point should be all points on the fundamental
+                # domain: [eps, eps*lambda] (including endpoint).
+                # Curvature and sampling new points is done
+                # using cubic spline interpolation.
+                Rs, Zs = points[:, 0], points[:, 1]
+                # do cubic spline interpolation
+                csR = CubicSpline(eps, Rs)
+                csZ = CubicSpline(eps, Zs)
+                # compute the curvature radius
+                # using R = (x'^2 + y'^2)^(3/2) / |x'y'' - y'x''|
+                R_cur_func = lambda e: (csR(e, 1)**2 + csZ(e, 1)**2)**(3/2) / np.abs(csR(e, 1)*csZ(e, 2) - csZ(e, 1)*csR(e, 2))
+    
+                # Check curvature radius at geometric means of eps intervals, refining if D/R_cur < tol
+                # until all intervals satisfy the condition. Use a while loop to refine until no new points are added.
+                # Each iteration can roughly double the point count (worst case: every interval
+                # refines), so max_iter alone doesn't bound the work done - cap the total point
+                # count too, since a genuine curvature singularity (or just a very tight tol) can
+                # otherwise blow this up long before max_iter is reached.
+                eps_refined = list(eps)
+                hit_cap = False
+                for _ in range(max_iter):
+                    if len(eps_refined) >= max_points:
+                        hit_cap = True
+                        break
+                    new_points = []
+                    for i in range(len(eps_refined)-1):
+                        e1, e2 = eps_refined[i], eps_refined[i+1]
+                        e_mid = np.sqrt(e1*e2)
+                        R_cur = R_cur_func(e_mid)
+                        D = np.linalg.norm(np.array([csR(e2)-csR(e1), csZ(e2)-csZ(e1)]))
+                        if D/R_cur > tol:
+                            new_points.append(e_mid)
+                    if not new_points:
+                        break
+                    if len(eps_refined) + len(new_points) > max_points:
+                        new_points = new_points[:max(0, max_points - len(eps_refined))]
+                        hit_cap = True
+                    eps_refined.extend(new_points)
+                    eps_refined = sorted(set(eps_refined))
+                    if hit_cap:
+                        break
+                else:
+                    hit_cap = True
+    
+                if hit_cap:
+                    logger.warning(
+                        f"Adaptive manifold refinement hit max_iter={max_iter}/max_points={max_points} "
+                        f"without converging to tol={tol}; using the {len(eps_refined)} points found so far."
+                    )
+    
+                # make into np array
+                eps_refined = np.array(eps_refined)
+    
+                return eps_refined
+            
+    
+            # Now evolve the stable and unstable manifolds using the adaptive algorithm
+    
+            def evolve_adaptive(rfp, vector, direction, eps0, eps1, n_periods):
+
+                def evaluate_points(eps, k):
+                    # Generate initial points along the eigenvector
+                    points = rfp + np.outer(eps, vector)
+
+                    # If k = 0, no integration is needed
+                    if k == 0:
+                        return points
+
+                    # Integrate the initial points for k map iterations
+                    return self.integrate(points, nintersect=k, direction=direction)[-1]
+                
+                # Start with three points spanning the fundamental domain
+                # [eps0, eps1] (geometrically spaced, matching the
+                # eigenvalue-driven spacing convention used elsewhere).
+                eps_seed = np.geomspace(eps0, eps1, 8)
+                points_seed = evaluate_points(eps_seed, k=0)
+    
+                eps_k = np.geomspace(eps0, eps1, 8)
+                periods = []
+
+                for k in range(n_periods + 1):
+
+                    # Compute the manifold points at iteration k
+                    points_k = evaluate_points(eps_k, k)
+
+                    # Refine the current segment
+                    for _ in range(50):
+
+                        # Find epsilon values where refinement is needed
+                        eps_new = adaptive_algorithm(
+                            points_k, eps_k,
+                            max_iter=1
+                        )
+
+                        # Stop if no new points are needed
+                        if len(eps_new) == len(eps_k):
+                            break
+
+                        # Update epsilon values
+                        eps_k = eps_new
+
+                        # Recompute the manifold through direct integration
+                        points_k = evaluate_points(eps_k, k)
+
+                    periods.append(points_k.copy())
+    
+                # each period's first point is the same physical point as the previous
+                # period's last point (the map image of the fundamental domain's boundary).
+                periods = [periods[0]] + [p[1:] for p in periods[1:]]
+    
+                return np.concatenate(periods)
+    
+            eps_s0 = self.clinics.stable_epsilons[0]
+            eps_u0 = self.clinics.unstable_epsilons[0]
+            # eps grows away from the fixed point at rate lambda_u forward (unstable)
+            # and at rate 1/lambda_s backward (stable, since lambda_s < 1 contracts forward)
+            eps_s1 = eps_s0 / self.lambda_s
+            eps_u1 = eps_u0 * self.lambda_u
+    
+            self._stable_trajectory = evolve_adaptive(
+                self.rfp_s, self.vector_s, -1, eps_s0, eps_s1, n_s
+            )
+            self._unstable_trajectory = evolve_adaptive(
+                self.rfp_u, self.vector_u, 1, eps_u0, eps_u1, n_u
+            )
+    
+            if kwargs:
+                logger.warning(f"Unused keyword arguments: {kwargs}")
+    
+            return self._stable_trajectory, self._unstable_trajectory
 
     def get_lobe_boundary(self, lobe_number, neps=40, which_section: int= 1):
         """
