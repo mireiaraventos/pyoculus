@@ -70,6 +70,8 @@ py3.install_sources(
   'pyoculus/fields/magnetic_field.py',
   'pyoculus/fields/qfm_bfield.py',
   'pyoculus/fields/simsopt_bfield.py',
+  'pyoculus/fields/slab_bfield_one_pert.py',
+  'pyoculus/fields/slab_bfield_two_pert.py',
   'pyoculus/fields/spec_bfield.py',
   'pyoculus/fields/toroidal_bfield.py',
   'pyoculus/fields/two_waves.py',
