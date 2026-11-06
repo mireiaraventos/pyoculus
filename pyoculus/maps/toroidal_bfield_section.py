@@ -39,10 +39,15 @@ class ToroidalBfieldSection(IntegratedMap):
         y_new = self._integrate(t, y0)
         return self.into_domain(y_new)
 
+    def df_old(self, t, y0):
+        ic = np.array([*y0, 1.0, 0.0, 0.0, 1.0])
+        self._integrator.set_rhs(self._ode_rhs_tangent_old)
+        return self._integrate(t, ic)[2:6].reshape([2, 2])
+
     def df(self, t, y0):
         ic = np.array([*y0, 1.0, 0.0, 0.0, 1.0])
         self._integrator.set_rhs(self._ode_rhs_tangent)
-        return self._integrate(t, ic)[2:6].reshape([2, 2])
+        return self._integrate(t, ic)[2:6].reshape(2, 2)
 
     def lagrangian(self, y0, t):
         self._integrator.set_rhs(self._ode_rhs_A)
@@ -89,7 +94,7 @@ class ToroidalBfieldSection(IntegratedMap):
         B = self._mf.B(stz, *args)
         return np.array([B[0] / B[2], B[1] / B[2]])
 
-    def _ode_rhs_tangent(self, phi, y, *args):
+    def _ode_rhs_tangent_old(self, phi, y, *args):
         """
         Calculates the right-hand side (RHS) of the ODE with differential of the dependent variables.
 
@@ -114,6 +119,26 @@ class ToroidalBfieldSection(IntegratedMap):
         df = np.zeros([6])
         df[0:2] = Bu[0:2] / Bu[2]
         df[2:6] = deltax.flatten()
+
+        return df
+
+    def _ode_rhs_tangent(self, phi, y, *args):
+        stz = np.array([y[0], y[1], phi])
+        Bu, dBu = self._mf.dBdX(stz, *args)
+
+        J = y[2:6].reshape(2, 2)
+        Bz = Bu[2]
+
+        A = (
+            Bz * dBu[0:2, 0:2]
+            - np.outer(Bu[0:2], dBu[2, 0:2])
+        ) / Bz**2
+
+        dJ = A @ J
+
+        df = np.zeros(6)
+        df[0:2] = Bu[0:2] / Bz
+        df[2:6] = dJ.flatten()
 
         return df
 
